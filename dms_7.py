@@ -51,7 +51,7 @@ HR_MIN          = 40
 HR_MAX          = 140
 HR_HISTORY_SIZE = 10
 MAX_DELTA       = 12
-HR_TIMEOUT_SEC  = 10.0
+HR_TIMEOUT_SEC  = 5.0
 
 # ==========================================
 # 全域變數
@@ -69,6 +69,7 @@ emergency_lock      = threading.Lock()
 
 sleep_start_time = 0
 phone_start_time = 0
+yawn_start_time  = 0
 last_alarm_time  = {}
 
 output_frame = None
@@ -235,7 +236,7 @@ def _set_streamcam_as_pulseaudio_default():
 
 
 def vosk_listen_thread():
-    global emergency_mode
+    global emergency_mode, emergency_reason
     if not VOSK_AVAILABLE or not os.path.exists(VOSK_MODEL_PATH):
         print("⚠️ [Vosk] 模型未找到，語音功能略過")
         return
@@ -444,9 +445,14 @@ def yolo_inference_loop():
             phone_start_time = 0
 
         if "yawn" in detected:
-            if now - last_alarm_time.get("yawn", 0) > COOLDOWN["yawn"]:
-                send_discord_alert("yawn", frame)
-                last_alarm_time["yawn"] = now
+            if yawn_start_time == 0:
+                yawn_start_time = now
+            elif now - yawn_start_time >= 2.0:
+                if now - last_alarm_time.get("yawn", 0) > COOLDOWN["yawn"]:
+                    send_discord_alert("yawn", frame)
+                    last_alarm_time["yawn"] = now
+        else:
+            yawn_start_time = 0
 
         if "smoke" in detected:
             if now - last_alarm_time.get("smoke", 0) > COOLDOWN["smoke"]:
