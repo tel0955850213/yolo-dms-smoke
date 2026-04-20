@@ -1,0 +1,12 @@
+train:
+  - C:/Users/Lin/Desktop/CLAUDE_CRAZY/yolov10/train/images
+  - C:/Users/Lin/Desktop/CLAUDE_CRAZY/smoke_only/train/images
+val:
+  - C:/Users/Lin/Desktop/CLAUDE_CRAZY/yolov10/valid/images
+  - C:/Users/Lin/Desktop/CLAUDE_CRAZY/smoke_only/valid/images
+test:
+  - C:/Users/Lin/Desktop/CLAUDE_CRAZY/yolov10/test/images
+  - C:/Users/Lin/Desktop/CLAUDE_CRAZY/smoke_only/test/images
+
+nc: 6
+names: ['eyeclose', 'eyeopen', 'face', 'phone', 'yawn', 'smoke']

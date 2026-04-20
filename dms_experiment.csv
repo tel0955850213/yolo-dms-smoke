@@ -1,0 +1,3 @@
+Time,AI_Detect,Max_Conf,Ground_Truth(Key),Alert_Triggered
+20:18:33,Phone,0.87,,Yes (Phone)
+20:18:43,Phone,0.9,,Yes (Phone)
