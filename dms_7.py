@@ -59,6 +59,8 @@ HR_TIMEOUT_SEC  = 10.0
 current_heart_rate  = 0.0
 hr_history          = []
 last_valid_hr_time  = 0.0
+hr_lost_time        = 0.0   # 心跳訊號消失的時間（用來計算 10 秒後觸發 110）
+emergency_reason    = ""    # 觸發原因：'heartbeat' 或 'voice'
 
 current_max_temp    = 0.0
 
@@ -149,7 +151,8 @@ def thermal_listen_thread():
 # 模組 2：LD6002 雷達心跳監聽（穩定濾波版）
 # ==========================================
 def radar_listen_thread():
-    global current_heart_rate, hr_history, last_valid_hr_time, emergency_mode
+    global current_heart_rate, hr_history, last_valid_hr_time, hr_lost_time
+    global emergency_mode, emergency_reason
     tf = TinyFrame()
     try:
         ser = serial.Serial(RADAR_PORT, RADAR_BAUD, timeout=1)
@@ -169,7 +172,9 @@ def radar_listen_thread():
                         raw_hr = struct.unpack('<f', msg.data[0:4])[0]
 
                         if HR_MIN <= raw_hr <= HR_MAX:
+                            # 心跳恢復：重置所有計時器
                             last_valid_hr_time = time.time()
+                            hr_lost_time = 0.0
 
                             if len(hr_history) >= 3:
                                 avg = sum(hr_history) / len(hr_history)
@@ -183,18 +188,27 @@ def radar_listen_thread():
                             current_heart_rate = sum(hr_history) / len(hr_history)
 
                             with emergency_lock:
-                                if emergency_mode and current_heart_rate > 0:
+                                if emergency_mode:
                                     emergency_mode = False
+                                    emergency_reason = ""
                                     print("✅ [LD6002] 心跳恢復，解除緊急模式")
 
                         else:
-                            if last_valid_hr_time > 0 and time.time() - last_valid_hr_time > HR_TIMEOUT_SEC:
+                            now = time.time()
+                            # 步驟 1：立刻顯示 '--'（心跳訊號消失）
+                            if last_valid_hr_time > 0 and current_heart_rate > 0:
                                 hr_history.clear()
                                 current_heart_rate = 0.0
+                                hr_lost_time = now
+                                print("⚠️  [LD6002] 心跳訊號消失，顯示 '--'")
+
+                            # 步驟 2：再等 HR_TIMEOUT_SEC 秒才觸發 110
+                            if hr_lost_time > 0 and now - hr_lost_time > HR_TIMEOUT_SEC:
                                 with emergency_lock:
                                     if not emergency_mode:
                                         emergency_mode = True
-                                        print("🚨 [LD6002] 心跳消失超過 5 秒，觸發緊急警報！")
+                                        emergency_reason = "heartbeat"
+                                        print(f"🚨 [LD6002] 心跳消失超過 {HR_TIMEOUT_SEC:.0f} 秒，觸發緊急警報！")
 
                     tf.complete = False
                     tf.reset_parser()
@@ -273,13 +287,14 @@ def vosk_listen_thread():
                     print(f"🎤 [Vosk] 偵測到求救詞：{text}")
                     with emergency_lock:
                         emergency_mode = True
+                        emergency_reason = f"voice:{text}"
         except Exception:
             pass
 
 # ==========================================
 # 模組 4：Discord 推播
 # ==========================================
-def send_discord_alert(alert_type, frame):
+def send_discord_alert(alert_type, frame, reason=""):
     global current_heart_rate, current_max_temp
 
     msgs = {
@@ -290,8 +305,17 @@ def send_discord_alert(alert_type, frame):
         "emergency": "🆘 **【緊急警報】駕駛有危險！正在撥打 110！**",
     }
 
-    full_msg  = msgs.get(alert_type, "🚨 異常！") + "\n\n"
-    full_msg += f"💓 心跳：**{current_heart_rate:.0f}** bpm\n"
+    full_msg = msgs.get(alert_type, "🚨 異常！") + "\n\n"
+
+    if alert_type == "emergency":
+        if reason == "heartbeat":
+            full_msg += f"⚠️ **觸發原因：心跳消失超過 {HR_TIMEOUT_SEC:.0f} 秒**\n\n"
+        elif reason.startswith("voice:"):
+            word = reason.split(":", 1)[1]
+            full_msg += f"🎤 **觸發原因：駕駛說了「{word}」呼救**\n\n"
+
+    hr_display = f"{current_heart_rate:.0f}" if current_heart_rate > 0 else "--"
+    full_msg += f"💓 心跳：**{hr_display}** bpm\n"
     full_msg += f"🌡️ 體溫：**{current_max_temp:.1f}** °C"
 
     def _send():
@@ -436,7 +460,9 @@ def yolo_inference_loop():
         if is_emergency:
             frame = draw_emergency_overlay(frame)
             if not emergency_discord_sent:
-                send_discord_alert("emergency", frame)
+                with emergency_lock:
+                    reason = emergency_reason
+                send_discord_alert("emergency", frame, reason=reason)
                 emergency_discord_sent = True
         else:
             emergency_discord_sent = False
