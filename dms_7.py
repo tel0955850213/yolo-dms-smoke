@@ -196,15 +196,18 @@ def radar_listen_thread():
 
                         else:
                             now = time.time()
-                            # 步驟 1：立刻顯示 '--'（心跳訊號消失）
-                            if last_valid_hr_time > 0 and current_heart_rate > 0:
+                            # 步驟 1：記錄第一次收不到合法心跳的時間
+                            if last_valid_hr_time > 0 and hr_lost_time == 0.0:
+                                hr_lost_time = now
+
+                            # 步驟 2：超過 2 秒才顯示 '--'（過濾單一雜訊）
+                            if hr_lost_time > 0 and now - hr_lost_time > 2.0 and current_heart_rate > 0:
                                 hr_history.clear()
                                 current_heart_rate = 0.0
-                                hr_lost_time = now
-                                print("⚠️  [LD6002] 心跳訊號消失，顯示 '--'")
+                                print("⚠️  [LD6002] 心跳訊號消失 2 秒，顯示 '--'")
 
-                            # 步驟 2：再等 HR_TIMEOUT_SEC 秒才觸發 110
-                            if hr_lost_time > 0 and now - hr_lost_time > HR_TIMEOUT_SEC:
+                            # 步驟 3：顯示 '--' 後再等 HR_TIMEOUT_SEC 秒才觸發 110
+                            if hr_lost_time > 0 and now - hr_lost_time > 2.0 + HR_TIMEOUT_SEC:
                                 with emergency_lock:
                                     if not emergency_mode:
                                         emergency_mode = True
