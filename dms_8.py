@@ -56,10 +56,10 @@ HR_TIMEOUT_SEC  = 5.0
 # ==========================================
 # 全域變數
 # ==========================================
-current_heart_rate  = 0.0
-hr_history          = []
-last_valid_hr_time  = 0.0
-hr_lost_time        = 0.0   # 心跳訊號消失的時間（用來計算 10 秒後觸發 110）
+current_heart_rate   = 0.0
+hr_history           = []
+last_valid_hr_time   = 0.0
+last_any_signal_time = 0.0   # 上次收到 LD6002 任何訊號的時間（含晃動時的無效讀值）
 emergency_reason    = ""    # 觸發原因：'heartbeat' 或 'voice'
 
 current_max_temp    = 0.0
@@ -152,7 +152,7 @@ def thermal_listen_thread():
 # 模組 2：LD6002 雷達心跳監聽（穩定濾波版）
 # ==========================================
 def radar_listen_thread():
-    global current_heart_rate, hr_history, last_valid_hr_time, hr_lost_time
+    global current_heart_rate, hr_history, last_valid_hr_time, last_any_signal_time
     global emergency_mode, emergency_reason
     tf = TinyFrame()
     try:
@@ -170,12 +170,14 @@ def radar_listen_thread():
                 if tf.complete:
                     msg = tf.rf
                     if msg.type == 0x0A15 and len(msg.data) >= 4:
+                        # 只要有訊號就更新（不管 HR 數值合不合法）
+                        # 晃動時 LD6002 還是會送訊息，用這個來區分「晃動」vs「被擋住」
+                        last_any_signal_time = time.time()
                         raw_hr = struct.unpack('<f', msg.data[0:4])[0]
 
                         if HR_MIN <= raw_hr <= HR_MAX:
-                            # 心跳恢復：重置所有計時器
+                            # 合法讀值：更新心跳
                             last_valid_hr_time = time.time()
-                            hr_lost_time = 0.0
 
                             if len(hr_history) >= 3:
                                 avg = sum(hr_history) / len(hr_history)
@@ -194,28 +196,25 @@ def radar_listen_thread():
                                     emergency_reason = ""
                                     print("✅ [LD6002] 心跳恢復，解除緊急模式")
 
-                        else:
-                            now = time.time()
-                            # 步驟 1：記錄第一次收不到合法心跳的時間
-                            if last_valid_hr_time > 0 and hr_lost_time == 0.0:
-                                hr_lost_time = now
-
-                            # 步驟 2：超過 7 秒才顯示 '--'（過濾雜訊，給雷達更多重連時間）
-                            if hr_lost_time > 0 and now - hr_lost_time > 5.0 and current_heart_rate > 0:
-                                hr_history.clear()
-                                current_heart_rate = 0.0
-                                print("⚠️  [LD6002] 心跳訊號消失 7 秒，顯示 '--'")
-
-                            # 步驟 3：顯示 '--' 後再等 HR_TIMEOUT_SEC 秒才觸發 110
-                            if hr_lost_time > 0 and now - hr_lost_time > 5.0 + HR_TIMEOUT_SEC:
-                                with emergency_lock:
-                                    if not emergency_mode:
-                                        emergency_mode = True
-                                        emergency_reason = "heartbeat"
-                                        print(f"🚨 [LD6002] 心跳消失超過 {HR_TIMEOUT_SEC:.0f} 秒，觸發緊急警報！")
+                        # 若 HR 超出範圍（晃動），保留上一次心跳數值，不顯示 '--'
 
                     tf.complete = False
                     tf.reset_parser()
+
+            # for 迴圈結束後：檢查是否完全沒有訊號（真正被擋住）
+            now = time.time()
+            if last_any_signal_time > 0 and now - last_any_signal_time > 8.0 and current_heart_rate > 0:
+                hr_history.clear()
+                current_heart_rate = 0.0
+                print("⚠️  [LD6002] 完全沒有訊號 8 秒，顯示 '--'")
+
+            if last_any_signal_time > 0 and now - last_any_signal_time > 8.0 + HR_TIMEOUT_SEC:
+                with emergency_lock:
+                    if not emergency_mode:
+                        emergency_mode = True
+                        emergency_reason = "heartbeat"
+                        print(f"🚨 [LD6002] 訊號消失超過 {8 + HR_TIMEOUT_SEC:.0f} 秒，觸發緊急警報！")
+
         except Exception:
             pass
 
