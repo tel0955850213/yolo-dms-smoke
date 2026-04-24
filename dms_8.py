@@ -46,12 +46,13 @@ COOLDOWN = {
     "yawn":     5.0,
 }
 
-# LD6002 心跳濾波參數
-HR_MIN          = 40
-HR_MAX          = 140
+# LD6002 心跳濾波參數（規格書：HR 範圍 60-150 bpm）
+HR_MIN          = 60
+HR_MAX          = 150
 HR_HISTORY_SIZE = 10
 MAX_DELTA       = 12
-HR_TIMEOUT_SEC  = 5.0
+HR_GRACE_SEC    = 15.0   # 心跳超出範圍幾秒後顯示 '--'
+HR_TIMEOUT_SEC  = 15.0   # 顯示 '--' 後再幾秒觸發 110（共 30 秒）
 
 # ==========================================
 # 全域變數
@@ -59,7 +60,7 @@ HR_TIMEOUT_SEC  = 5.0
 current_heart_rate   = 0.0
 hr_history           = []
 last_valid_hr_time   = 0.0
-last_any_signal_time = 0.0   # 上次收到 LD6002 任何訊號的時間（含晃動時的無效讀值）
+hr_lost_time         = 0.0   # 心跳超出合法範圍的開始時間
 emergency_reason    = ""    # 觸發原因：'heartbeat' 或 'voice'
 
 current_max_temp    = 0.0
@@ -152,7 +153,7 @@ def thermal_listen_thread():
 # 模組 2：LD6002 雷達心跳監聽（穩定濾波版）
 # ==========================================
 def radar_listen_thread():
-    global current_heart_rate, hr_history, last_valid_hr_time, last_any_signal_time
+    global current_heart_rate, hr_history, last_valid_hr_time, hr_lost_time
     global emergency_mode, emergency_reason
     tf = TinyFrame()
     try:
@@ -170,14 +171,12 @@ def radar_listen_thread():
                 if tf.complete:
                     msg = tf.rf
                     if msg.type == 0x0A15 and len(msg.data) >= 4:
-                        # 只要有訊號就更新（不管 HR 數值合不合法）
-                        # 晃動時 LD6002 還是會送訊息，用這個來區分「晃動」vs「被擋住」
-                        last_any_signal_time = time.time()
                         raw_hr = struct.unpack('<f', msg.data[0:4])[0]
 
                         if HR_MIN <= raw_hr <= HR_MAX:
-                            # 合法讀值：更新心跳
+                            # ✅ 合法讀值：更新心跳，重置計時器
                             last_valid_hr_time = time.time()
+                            hr_lost_time = 0.0
 
                             if len(hr_history) >= 3:
                                 avg = sum(hr_history) / len(hr_history)
@@ -196,24 +195,28 @@ def radar_listen_thread():
                                     emergency_reason = ""
                                     print("✅ [LD6002] 心跳恢復，解除緊急模式")
 
-                        # 若 HR 超出範圍（晃動），保留上一次心跳數值，不顯示 '--'
+                        else:
+                            # ⚠️ 超出範圍：開始計時（晃動 or 被擋住）
+                            now = time.time()
+                            if last_valid_hr_time > 0 and hr_lost_time == 0.0:
+                                hr_lost_time = now
+
+                            # 15 秒沒有合法讀值 → 顯示 '--'
+                            if hr_lost_time > 0 and now - hr_lost_time > HR_GRACE_SEC and current_heart_rate > 0:
+                                hr_history.clear()
+                                current_heart_rate = 0.0
+                                print(f"⚠️  [LD6002] {HR_GRACE_SEC:.0f} 秒無合法心跳，顯示 '--'")
+
+                            # 再 15 秒（共 30 秒）→ 觸發 110
+                            if hr_lost_time > 0 and now - hr_lost_time > HR_GRACE_SEC + HR_TIMEOUT_SEC:
+                                with emergency_lock:
+                                    if not emergency_mode:
+                                        emergency_mode = True
+                                        emergency_reason = "heartbeat"
+                                        print(f"🚨 [LD6002] 心跳消失 {HR_GRACE_SEC+HR_TIMEOUT_SEC:.0f} 秒，觸發緊急警報！")
 
                     tf.complete = False
                     tf.reset_parser()
-
-            # for 迴圈結束後：檢查是否完全沒有訊號（真正被擋住）
-            now = time.time()
-            if last_any_signal_time > 0 and now - last_any_signal_time > 8.0 and current_heart_rate > 0:
-                hr_history.clear()
-                current_heart_rate = 0.0
-                print("⚠️  [LD6002] 完全沒有訊號 8 秒，顯示 '--'")
-
-            if last_any_signal_time > 0 and now - last_any_signal_time > 8.0 + HR_TIMEOUT_SEC:
-                with emergency_lock:
-                    if not emergency_mode:
-                        emergency_mode = True
-                        emergency_reason = "heartbeat"
-                        print(f"🚨 [LD6002] 訊號消失超過 {8 + HR_TIMEOUT_SEC:.0f} 秒，觸發緊急警報！")
 
         except Exception:
             pass
