@@ -51,8 +51,8 @@ HR_MIN          = 60
 HR_MAX          = 150
 HR_HISTORY_SIZE = 10
 MAX_DELTA       = 12
-HR_GRACE_SEC    = 5.0    # 心跳超出範圍幾秒後顯示 '--'
-HR_TIMEOUT_SEC  = 5.0    # 顯示 '--' 後再幾秒觸發 110（共 10 秒）
+HR_GRACE_SEC    = 15.0   # 心跳超出範圍幾秒後顯示 '--'
+HR_TIMEOUT_SEC  = 15.0   # 顯示 '--' 後再幾秒觸發 110（共 30 秒）
 
 # ==========================================
 # 全域變數
@@ -139,9 +139,8 @@ def thermal_listen_thread():
                     # 正常人體溫度範圍限制在 35.5–37.5°C
                     current_max_temp = max(35.5, min(37.5, avg_temp))
                 else:
-                    # 超出人體範圍（背景熱源、電子元件干擾）
-                    # 不更新顯示值，清歷史，保留上次合法體溫
                     temp_history.clear()
+                    current_max_temp = raw_temp
 
             except ValueError:
                 continue
