@@ -201,13 +201,13 @@ def radar_listen_thread():
                                 hr_lost_time = now
 
                             # 步驟 2：超過 7 秒才顯示 '--'（過濾雜訊，給雷達更多重連時間）
-                            if hr_lost_time > 0 and now - hr_lost_time > 7.0 and current_heart_rate > 0:
+                            if hr_lost_time > 0 and now - hr_lost_time > 5.0 and current_heart_rate > 0:
                                 hr_history.clear()
                                 current_heart_rate = 0.0
                                 print("⚠️  [LD6002] 心跳訊號消失 7 秒，顯示 '--'")
 
                             # 步驟 3：顯示 '--' 後再等 HR_TIMEOUT_SEC 秒才觸發 110
-                            if hr_lost_time > 0 and now - hr_lost_time > 7.0 + HR_TIMEOUT_SEC:
+                            if hr_lost_time > 0 and now - hr_lost_time > 5.0 + HR_TIMEOUT_SEC:
                                 with emergency_lock:
                                     if not emergency_mode:
                                         emergency_mode = True
@@ -376,7 +376,7 @@ def filter_boxes(all_boxes):
 # ==========================================
 # 模組 5：緊急橫幅（中文 PIL 版）
 # ==========================================
-def draw_emergency_overlay(frame):
+def draw_emergency_overlay(frame, reason=""):
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, 130), (640, 360), (0, 0, 180), -1)
     cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
@@ -384,8 +384,12 @@ def draw_emergency_overlay(frame):
                              (55, 140), font_size=46, color=(255, 255, 255))
     frame = put_chinese_text(frame, "正在撥打 110...",
                              (105, 235), font_size=40, color=(0, 255, 255))
-    frame = put_chinese_text(frame, "說「取消」可解除警報",
-                             (70, 305), font_size=30, color=(200, 200, 200))
+    # 心跳消失觸發：心跳恢復才解除；語音觸發：說「取消」才解除
+    if reason == "heartbeat":
+        hint = "心跳恢復後自動解除"
+    else:
+        hint = "說「取消」可解除警報"
+    frame = put_chinese_text(frame, hint, (70, 305), font_size=30, color=(200, 200, 200))
     return frame
 
 # ==========================================
@@ -484,10 +488,10 @@ def yolo_inference_loop():
             is_emergency = emergency_mode
 
         if is_emergency:
-            frame = draw_emergency_overlay(frame)
+            with emergency_lock:
+                reason = emergency_reason
+            frame = draw_emergency_overlay(frame, reason=reason)
             if not emergency_discord_sent:
-                with emergency_lock:
-                    reason = emergency_reason
                 send_discord_alert("emergency", frame, reason=reason)
                 emergency_discord_sent = True
         else:
