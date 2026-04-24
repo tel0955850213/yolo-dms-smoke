@@ -189,7 +189,7 @@ def radar_listen_thread():
                             current_heart_rate = sum(hr_history) / len(hr_history)
 
                             with emergency_lock:
-                                if emergency_mode:
+                                if emergency_mode and emergency_reason == "heartbeat":
                                     emergency_mode = False
                                     emergency_reason = ""
                                     print("✅ [LD6002] 心跳恢復，解除緊急模式")
@@ -200,14 +200,14 @@ def radar_listen_thread():
                             if last_valid_hr_time > 0 and hr_lost_time == 0.0:
                                 hr_lost_time = now
 
-                            # 步驟 2：超過 2 秒才顯示 '--'（過濾單一雜訊）
-                            if hr_lost_time > 0 and now - hr_lost_time > 5.0 and current_heart_rate > 0:
+                            # 步驟 2：超過 7 秒才顯示 '--'（過濾雜訊，給雷達更多重連時間）
+                            if hr_lost_time > 0 and now - hr_lost_time > 7.0 and current_heart_rate > 0:
                                 hr_history.clear()
                                 current_heart_rate = 0.0
-                                print("⚠️  [LD6002] 心跳訊號消失 2 秒，顯示 '--'")
+                                print("⚠️  [LD6002] 心跳訊號消失 7 秒，顯示 '--'")
 
                             # 步驟 3：顯示 '--' 後再等 HR_TIMEOUT_SEC 秒才觸發 110
-                            if hr_lost_time > 0 and now - hr_lost_time > 5.0 + HR_TIMEOUT_SEC:
+                            if hr_lost_time > 0 and now - hr_lost_time > 7.0 + HR_TIMEOUT_SEC:
                                 with emergency_lock:
                                     if not emergency_mode:
                                         emergency_mode = True
